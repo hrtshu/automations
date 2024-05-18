@@ -1,12 +1,15 @@
 #!/bin/bash -e
 
 if [ "$#" -ne 2 ]; then
-    echo "Usage: $0 DEVICE_INFO_LIST CHANNEL" 1>&2
+    echo "Usage: $0 DEVICE_INFO_LIST ADD_OR_REMOVE" 1>&2
     exit 1
 fi
 
 DEVICE_INFO_LIST="$1"
-CHANNEL="$2"
+ADD_OR_REMOVE="$2"
+
+[ "$ADD_OR_REMOVE" = "add" ] && CHANNEL=4
+[ "$ADD_OR_REMOVE" = "remove" ] && CHANNEL=2
 
 USB_HUB_ID="2109:2817"
 
