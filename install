@@ -3,6 +3,10 @@
 SCRIPT_PATH=$(readlink -f "$0")
 SCRIPT_DIR=$(dirname "$SCRIPT_PATH")
 
+mkdir -p ~/.local/bin
+ln -s -f "$SCRIPT_DIR/tools/adjust_display_config.sh" ~/.local/bin/
+ln -s -f "$SCRIPT_DIR/tools/set_tv_channel.py" ~/.local/bin/
+
 make -s -C "$SCRIPT_DIR/tools/usb_watcher" all
 make -s -C "$SCRIPT_DIR/tools/display_watcher" all
 echo "add SWITCHBOT_TOKEN & SWITCHBOT_SECRET to ~/.profile_env"
