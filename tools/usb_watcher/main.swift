@@ -1,7 +1,7 @@
 import Foundation
 import IOKit.usb
 
-func getDeviceInfoProperty(device: io_object_t, property: String) -> Int32 {
+func getDeviceProperty(device: io_object_t, property: String) -> Int32 {
     var value: Int32 = 0
     let result = IORegistryEntryGetParentEntry(device, kIOServicePlane, &value)
     if result == KERN_SUCCESS {
@@ -14,8 +14,8 @@ func getDeviceInfoProperty(device: io_object_t, property: String) -> Int32 {
 }
 
 func getDeviceInfo(device: io_object_t) -> String {
-    let vendorID = getDeviceInfoProperty(device: device, property: kUSBVendorID)
-    let productID = getDeviceInfoProperty(device: device, property: kUSBProductID)
+    let vendorID = getDeviceProperty(device: device, property: kUSBVendorID)
+    let productID = getDeviceProperty(device: device, property: kUSBProductID)
     return "\(String(format: "%04X", vendorID)):\(String(format: "%04X", productID))"
 }
 
