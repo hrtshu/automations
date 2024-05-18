@@ -1,1 +1,2 @@
-device_event_hooks/
+device_event_hooks/*
+!device_event_hooks/.gitkeep
