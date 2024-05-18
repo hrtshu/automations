@@ -1,58 +1,95 @@
 import Foundation
 import IOKit.usb
 
-func handleUSBEvent(iterator: io_iterator_t, eventType: String) {
+func getDeviceInfoProperty(device: io_object_t, property: String) -> Int32 {
+    var value: Int32 = 0
+    let result = IORegistryEntryGetParentEntry(device, kIOServicePlane, &value)
+    if result == KERN_SUCCESS {
+        let cfNumber = IORegistryEntryCreateCFProperty(device, String(property) as CFString, kCFAllocatorDefault, 0)
+        if let number = cfNumber?.takeUnretainedValue() as? NSNumber {
+            value = number.int32Value
+        }
+    }
+    return value
+}
+
+func getDeviceInfo(device: io_object_t) -> String {
+    let vendorID = getDeviceInfoProperty(device: device, property: kUSBVendorID)
+    let productID = getDeviceInfoProperty(device: device, property: kUSBProductID)
+    return "\(String(format: "%04X", vendorID)):\(String(format: "%04X", productID))"
+}
+
+func getAllConnectedDevices() -> [String] {
     var deviceInfoList: [String] = []
+    let matchingDict: CFMutableDictionary? = IOServiceMatching(kIOUSBDeviceClassName)
+    var iter: io_iterator_t = 0
+    let result = IOServiceGetMatchingServices(kIOMainPortDefault, matchingDict, &iter)
+    if result == KERN_SUCCESS {
+        while case let device = IOIteratorNext(iter), device != IO_OBJECT_NULL {
+            let deviceInfo = getDeviceInfo(device: device)
+            deviceInfoList.append(deviceInfo)
+            IOObjectRelease(device)
+        }
+    }
+    return deviceInfoList
+}
+
+func handleUSBEvent(iterator: io_iterator_t, eventType: String, previousDeviceInfoList: inout [String]) {
+    var changedDeviceInfoList: [String] = []
     while case let device = IOIteratorNext(iterator), device != IO_OBJECT_NULL {
-        // Get the device's vendor ID
-        var vendorID: Int32 = 0
-        let vendorIDResult = IORegistryEntryGetParentEntry(device, kIOServicePlane, &vendorID)
-        if vendorIDResult == KERN_SUCCESS {
-            let vendorIDCFNumber = IORegistryEntryCreateCFProperty(device, String(kUSBVendorID) as CFString, kCFAllocatorDefault, 0)
-            if let vendorIDNumber = vendorIDCFNumber?.takeUnretainedValue() as? NSNumber {
-                vendorID = vendorIDNumber.int32Value
-            }
-        }
-
-        // Get the device's product ID
-        var productID: Int32 = 0
-        let productIDResult = IORegistryEntryGetParentEntry(device, kIOServicePlane, &productID)
-        if productIDResult == KERN_SUCCESS {
-            let productIDCFNumber = IORegistryEntryCreateCFProperty(device, String(kUSBProductID) as CFString, kCFAllocatorDefault, 0)
-            if let productIDNumber = productIDCFNumber?.takeUnretainedValue() as? NSNumber {
-                productID = productIDNumber.int32Value
-            }
-        }
-
-        let deviceInfo = "\(String(format: "%04X", vendorID)):\(String(format: "%04X", productID))"
-        deviceInfoList.append(deviceInfo)
-
+        let deviceInfo = getDeviceInfo(device: device)
+        changedDeviceInfoList.append(deviceInfo)
         IOObjectRelease(device)
     }
 
-    if deviceInfoList.isEmpty {
+    // changedDeviceInfoList を補正
+    var currentAllDeviceInfoList: [String] = []
+    let containZeroDevice = eventType == "removed" && changedDeviceInfoList.contains("0000:0000")
+    if containZeroDevice {
+        currentAllDeviceInfoList = getAllConnectedDevices()
+        let newDeviceInfoList = Array(Set(previousDeviceInfoList).subtracting(Set(currentAllDeviceInfoList)))
+        print("\(newDeviceInfoList.joined(separator: ","))")
+        changedDeviceInfoList = newDeviceInfoList
+    }
+
+    if changedDeviceInfoList.isEmpty {
         return
     }
 
-    let joinedDeviceInfo = deviceInfoList.joined(separator: ",")
-    NSLog("\(eventType) \(joinedDeviceInfo)")
+    executeScript(eventType: eventType, changedDeviceInfoList: changedDeviceInfoList)
 
-    DispatchQueue.global().async {
-        let fileManager = FileManager.default
-        let homeDirectory = FileManager.default.homeDirectoryForCurrentUser
-        // TODO: scriptPathをコマンドライン引数で指定できるようにする
-        let scriptPath = homeDirectory.appendingPathComponent("automations/device_event_hooks/usb_\(eventType).sh").path
+    // previousDeviceInfoList を更新
+    if containZeroDevice {
+        previousDeviceInfoList = currentAllDeviceInfoList
+    } else {
+        if eventType == "added" {
+            previousDeviceInfoList.append(contentsOf: changedDeviceInfoList)
+        } else if eventType == "removed" {
+            previousDeviceInfoList = Array(Set(previousDeviceInfoList).subtracting(Set(changedDeviceInfoList)))
+        }
+    }
+}
 
-        if fileManager.isExecutableFile(atPath: scriptPath) {
-            let task = Process()
-            task.launchPath = scriptPath
-            task.arguments = [joinedDeviceInfo]
+func executeScript(eventType: String, changedDeviceInfoList: [String]) {
+    let joinedDeviceInfoList = changedDeviceInfoList.joined(separator: ",")
+    NSLog("\(eventType) \(joinedDeviceInfoList)")
 
-            let pipe: Pipe = Pipe()
-            task.standardOutput = pipe
-            task.standardError = pipe
+    let homeDirectory = FileManager.default.homeDirectoryForCurrentUser
+    // TODO: scriptPathをコマンドライン引数で指定できるようにする
+    let scriptPath = homeDirectory.appendingPathComponent("automations/device_event_hooks/usb_\(eventType).sh").path
 
-            task.launch()
+    if FileManager.default.isExecutableFile(atPath: scriptPath) {
+        let task = Process()
+        task.launchPath = scriptPath
+        task.arguments = [joinedDeviceInfoList]
+
+        let pipe: Pipe = Pipe()
+        task.standardOutput = pipe
+        task.standardError = pipe
+
+        task.launch()
+
+        DispatchQueue.global().async {
             task.waitUntilExit()
             let exitCode = task.terminationStatus
 
@@ -60,11 +97,14 @@ func handleUSBEvent(iterator: io_iterator_t, eventType: String) {
             if let output = String(data: data, encoding: .utf8) {
                 NSLog("script executed (exit code: \(exitCode)): \(scriptPath)\n\(output)")
             }
-        } else {
-            NSLog("Error: script is not executable: \(scriptPath)")
         }
+    } else {
+        NSLog("Error: script is not executable: \(scriptPath)")
     }
 }
+
+let serialQueue = DispatchQueue(label: "serialQueue")
+var previousDeviceInfoList: [String] = []
 
 class USBWatcher {
     private var ioKitNotificationPort: IONotificationPortRef?
@@ -96,11 +136,15 @@ class USBWatcher {
         CFRunLoopAddSource(CFRunLoopGetCurrent(), ioKitRunLoopSource, .commonModes)
 
         let addedCallback: IOServiceMatchingCallback = { (userData, iterator) in
-            handleUSBEvent(iterator: iterator, eventType: "added")
+            serialQueue.async {
+                handleUSBEvent(iterator: iterator, eventType: "added", previousDeviceInfoList: &previousDeviceInfoList)
+            }
         }
 
         let removedCallback: IOServiceMatchingCallback = { (userData, iterator) in
-            handleUSBEvent(iterator: iterator, eventType: "removed")
+            serialQueue.async {
+                handleUSBEvent(iterator: iterator, eventType: "removed", previousDeviceInfoList: &previousDeviceInfoList)
+            }
         }
 
         let addedResult = IOServiceAddMatchingNotification(
