@@ -1,6 +1,6 @@
 #!/bin/bash -e
 
-USB_HUB_ID="2109:0817"
+USB_HUB_ID="2109:2817"
 
 # load SWITCHBOT_TOKEN, SWITCHBOT_SECRET
 source ~/.profile_env
