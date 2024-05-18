@@ -4,4 +4,5 @@ SCRIPT_PATH=$(readlink -f "$0")
 SCRIPT_DIR=$(dirname "$SCRIPT_PATH")
 
 make -s -C "$SCRIPT_DIR/tools/usb_watcher" all
+make -s -C "$SCRIPT_DIR/tools/display_watcher" all
 echo "add SWITCHBOT_TOKEN & SWITCHBOT_SECRET to ~/.profile_env"
