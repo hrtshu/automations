@@ -23,7 +23,7 @@ class SwitchBotAPI:
         self.secret = secret
         self.conn = http.client.HTTPSConnection(API_BASE_URL)
 
-    def get_devices(self):
+    def _generate_auth_headers(self):
         nonce = uuid.uuid4()
         t = int(round(time.time() * 1000))
         string_to_sign = '{}{}{}'.format(self.token, t, nonce)
@@ -40,10 +40,18 @@ class SwitchBotAPI:
             'nonce': str(nonce)
         }
 
-        self.conn.request("GET", f"/{API_VERSION}/devices", headers=apiHeader)
+        return apiHeader
+
+    def _send_request(self, method, url, payload=None):
+        apiHeader = self._generate_auth_headers()
+        self.conn.request(method, url, payload, apiHeader)
         res = self.conn.getresponse()
         data = res.read()
-        devices = json.loads(data.decode("utf-8"))['body']['infraredRemoteList']
+        return data.decode("utf-8")
+
+    def get_devices(self):
+        response = self._send_request("GET", f"/{API_VERSION}/devices")
+        devices = json.loads(response)['body']['infraredRemoteList']
         return devices
 
     def find_device_id(self, devices, device_name):
@@ -58,15 +66,8 @@ class SwitchBotAPI:
             "command": command,
             "parameter": parameter,
         })
-        apiHeader = {
-            'Authorization': self.token,
-            'Content-Type': CONTENT_TYPE,
-            'charset': CHARSET
-        }
-        self.conn.request("POST", f"/{API_VERSION}/devices/{device_id}/commands", payload, apiHeader)
-        res = self.conn.getresponse()
-        data = res.read()
-        return data.decode("utf-8")
+        response = self._send_request("POST", f"/{API_VERSION}/devices/{device_id}/commands", payload)
+        return response
 
 def main():
     parser = argparse.ArgumentParser()
