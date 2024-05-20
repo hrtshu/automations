@@ -70,7 +70,7 @@ class SwitchBotAPI:
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("tv_device_name", help="TV device name")
+    parser.add_argument("tv_device_id", help="TV device id")
     parser.add_argument("tv_channel", type=int, help="TV channel")
     args = parser.parse_args()
 
@@ -82,14 +82,8 @@ def main():
         sys.exit(1)
 
     api = SwitchBotAPI(token, secret)
-    devices = api.get_devices()
 
-    tv_device_id = api.find_device_id(devices, args.tv_device_name)
-    if tv_device_id is None:
-        print(f"TV device with name '{args.tv_device_name}' not found.", file=sys.stderr)
-        sys.exit(1)
-
-    response = api.send_command(tv_device_id, "command", "SetChannel", str(args.tv_channel))
+    response = api.send_command(args.tv_device_id, "command", "SetChannel", str(args.tv_channel))
     print(response)
 
 if __name__ == "__main__":

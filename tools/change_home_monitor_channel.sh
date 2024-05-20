@@ -19,4 +19,4 @@ source ~/.profile_env
 echo "$DEVICE_INFO_LIST" | grep -q "$USB_HUB_ID" || { echo "usb hub '$USB_HUB_ID' is not detected."; exit 0; }
 
 echo "usb hub '$USB_HUB_ID' is detected."
-~/automations/tools/set_tv_channel.py "モニター" "$CHANNEL"
+~/automations/tools/set_tv_channel.py "01-202309241713-48053111" "$CHANNEL" # モニター
