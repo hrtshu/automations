@@ -15,6 +15,8 @@ git clone https://github.com/hrtshu/dotfiles ~/dotfiles && ~/dotfiles/install
 - `device_event_hooks/`
   - `display_added.sh`
     - no arguments
+  - `display_removed.sh`
+    - no arguments
   - `usb_added.sh`
     - first argument: `0411:02DA,0BDA:8153,1A40:0801` (example)
       - `<vendorID>:<productId>` (hex)
