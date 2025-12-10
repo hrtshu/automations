@@ -4,6 +4,7 @@ build:
 	mkdir -p ~/.local/bin
 	swiftc -o ~/.local/bin/display_watcher main.swift
 load-plist:
+	mkdir -p ~/Library/LaunchAgents/
 	cp -f com.shuhei-h.automations.display-watcher.plist ~/Library/LaunchAgents/
 	sed -i'' -e 's|{{HOME}}|$(HOME)|g' ~/Library/LaunchAgents/com.shuhei-h.automations.display-watcher.plist
 	launchctl load ~/Library/LaunchAgents/com.shuhei-h.automations.display-watcher.plist
