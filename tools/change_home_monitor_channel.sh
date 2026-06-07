@@ -31,4 +31,8 @@ echo "usb hub '$USB_HUB_ID' is detected."
 [ "$ADD_OR_REMOVE" = "add" ] && CHANNEL=4
 [ "$ADD_OR_REMOVE" = "remove" ] && CHANNEL=2
 echo "changing channel to $CHANNEL"
-~/automations/tools/set_tv_channel.py "01-202309241713-48053111" "$CHANNEL" # モニター
+if [ -n "$SWITCHBOT_PROXY_ENDPOINT_URL" ]; then
+    ~/automations/tools/set_tv_channel_gas.py "01-202309241713-48053111" "$CHANNEL" # モニター
+else
+    ~/automations/tools/set_tv_channel.py "01-202309241713-48053111" "$CHANNEL" # モニター
+fi
