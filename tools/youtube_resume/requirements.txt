@@ -1,0 +1,4 @@
+# pyatv 0.18.0 は srptools 2.x と非互換 (SRPClientSession の引数が変わり
+# ペアリング時に TypeError になる) ため、srptools は 1.x に固定する。
+pyatv==0.18.0
+srptools<2

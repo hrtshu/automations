@@ -1,0 +1,24 @@
+{
+  "manifest_version": 3,
+  "name": "YouTube Resume Handoff",
+  "version": "1.0.0",
+  "description": "Apple TV で再生中の YouTube 動画を、履歴ページの DOM から特定して開き直す (~/automations/tools/youtube_resume と連携)。",
+  "host_permissions": ["http://127.0.0.1:18765/*"],
+  "background": { "service_worker": "background.js" },
+  "content_scripts": [
+    {
+      "matches": [
+        "https://www.youtube.com/",
+        "https://www.youtube.com/feed/history*",
+        "https://www.youtube.com/results*"
+      ],
+      "js": ["content.js"],
+      "run_at": "document_idle"
+    },
+    {
+      "matches": ["https://www.youtube.com/watch*"],
+      "js": ["content.js"],
+      "run_at": "document_start"
+    }
+  ]
+}

@@ -10,3 +10,40 @@ ln -s -f "$SCRIPT_DIR/tools/set_tv_channel.py" ~/.local/bin/
 make -s -C "$SCRIPT_DIR/tools/usb_watcher" all
 make -s -C "$SCRIPT_DIR/tools/display_watcher" all
 echo "add SWITCHBOT_TOKEN & SWITCHBOT_SECRET to ~/.profile_env"
+
+# --- youtube_resume: Apple TV で見ていた YouTube を Mac へ引き継ぐ ---
+# 詳細は tools/youtube_resume/README.md の「初期セットアップ」。
+YR_DIR="$SCRIPT_DIR/tools/youtube_resume"
+chmod +x "$YR_DIR"/*.py
+
+# pyatv 用の専用 venv (Python 3.13)。既存の ~/.local/bin/atvremote は
+# mise の Python 3.15 では起動できないため専用 venv が必須 (README 参照)。
+# 再実行で作り直しにならないよう、無い場合だけ作る。
+if [ ! -x "$YR_DIR/.venv/bin/atvremote" ]; then
+  mise install python@3.13
+  mise exec python@3.13 -- python -m venv "$YR_DIR/.venv"
+  "$YR_DIR/.venv/bin/pip" install -r "$YR_DIR/requirements.txt"
+fi
+
+# フックへの組み込み。device_event_hooks/ は管理外 (ローカルのフック置き場)
+# のため、未組み込みの場合だけ README 正本と同じスニペットを追記する。
+YR_HOOK="$SCRIPT_DIR/device_event_hooks/usb_added.sh"
+if [ -f "$YR_HOOK" ]; then
+  chmod +x "$YR_HOOK"
+  if ! grep -q "youtube_resume" "$YR_HOOK"; then
+    cat >> "$YR_HOOK" <<'EOF'
+
+# Apple TV で見ていた YouTube を Mac 側に引き継ぐ (表示切替を遅らせないよう非同期で実行)
+# 対象ハブ以外では youtube_resume 側の判定でミラーに倒れるだけだが、
+# change_home_monitor_channel.sh と同じハブ条件を満たす場合のみ起動する
+if echo "$DEVICE_INFO_LIST" | grep -q "2109:2817"; then
+    (sleep 2; "$SCRIPT_DIR/../tools/youtube_resume/youtube_resume.py") \
+        >> ~/Library/Logs/youtube_resume.hook.log 2>&1 &
+fi
+EOF
+  fi
+fi
+
+# 以後の2つは対話操作が要るため自動化せず、案内だけ出す。
+echo "youtube_resume: if Apple TV is not paired yet, run atvremote pair for both protocols (see tools/youtube_resume/README.md)"
+echo "youtube_resume: load the Chrome extension from $YR_DIR/extension via chrome://extensions (developer mode), install the YouTube PWA in Chrome, and make sure displayplacer is available (brew install displayplacer)"
