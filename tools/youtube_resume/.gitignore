@@ -1,0 +1,5 @@
+# pyatv 用の専用 venv は requirements.txt からローカルで作り直すものなので
+# バージョン管理の対象外にする (作り方は README の初期セットアップ参照)。
+# Python のバイトコードキャッシュも同様。
+.venv/
+__pycache__/
