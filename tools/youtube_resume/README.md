@@ -69,6 +69,11 @@ Mac 側の再生状態:
 
 ## 初期セットアップ (Mac のターミナルで1回だけ)
 
+大半はリポジトリ直下の `./install` が自動で実行する (実行権限の付与、
+専用 venv の作成、フックへの組み込み追記)。手作業が残るのは Apple TV の
+ペアリング (PIN 入力) と Chrome 拡張機能の読み込みだけ。以下は内訳と
+手作業分の手順。
+
 ```sh
 chmod +x ~/automations/tools/youtube_resume/*.py
 chmod +x ~/automations/device_event_hooks/usb_added.sh
@@ -196,9 +201,10 @@ Cookie DB の読み取りはしないので、キーチェーン許可やプロ�
   (~/Applications/Chrome Apps.localized/YouTube.app) を開いてシムから
   冷間起動させる
 - PWA のバンドルIDは環境依存 (PWA のインストール状態で変わり得る) ため
-  ハードコードを正とせず、アプリバンドルの `Contents/Info.plist` の
-  `CFBundleIdentifier` から解決する (読めない場合のみフォールバック値を
-  使う)。`--app-id` に渡す値もバンドルIDの末尾から導出する
+  ハードコードせず、アプリバンドルの `Contents/Info.plist` の
+  `CFBundleIdentifier` から解決する。解決できない場合は決め打ち値で
+  ごまかさず、引き継ぎを中止してエラーで終了する。`--app-id` に渡す値も
+  バンドルIDの末尾から導出する
 - 起動後の対象ウィンドウの選択・リロード・内蔵側への配置は、1回の
   AppleScript 実行の中で「YouTube ホームを表示しているタブ」を URL で
   見つけて完結させる。ウィンドウIDを別の osascript 実行へ持ち回すと

@@ -53,9 +53,6 @@ LOG_PATH = os.path.expanduser("~/Library/Logs/youtube_resume.log")
 STATE_PATH = os.path.expanduser("~/.local/state/youtube_resume/last_resume.json")
 PWA_APP_BUNDLE = os.path.expanduser(
     "~/Applications/Chrome Apps.localized/YouTube.app")
-# バンドルIDのフォールバック値。末尾は CrAppModeShortcutID
-# (= Chrome の --app-id に渡す値) と同値。
-_PWA_BUNDLE_ID_FALLBACK = "com.google.Chrome.app.agimnkijcaahngcdmfeangaknmldooml"
 _PWA_BUNDLE_ID_CACHE = None
 
 
@@ -63,11 +60,12 @@ def pwa_bundle_id():
     """YouTube アプリ (PWA) のバンドルIDをアプリバンドル自身から解決する。
 
     バンドルIDは PWA のインストール状態に依存する環境依存値のため、
-    ハードコードを正とせず、アプリバンドル (冷間起動の open -a でも使う
+    ハードコードはせず、アプリバンドル (冷間起動の open -a でも使う
     PWA_APP_BUNDLE) の Contents/Info.plist にある CFBundleIdentifier を
-    正とする (無い場合は CrAppModeShortcutID から組み立てる)。plist が
-    読めない場合だけフォールバック値を使う。結果はプロセス内にキャッシュ
-    する。
+    正とする (無い場合は CrAppModeShortcutID から組み立てる)。
+    解決できない場合は、環境依存の決め打ち値でごまかさず RuntimeError を
+    送出する (呼び出し側は引き継ぎを中止してエラーを返す)。結果は
+    プロセス内にキャッシュする。
     """
     global _PWA_BUNDLE_ID_CACHE
     if _PWA_BUNDLE_ID_CACHE:
@@ -82,7 +80,14 @@ def pwa_bundle_id():
             bundle_id = "com.google.Chrome.app." + info["CrAppModeShortcutID"]
     except Exception:
         bundle_id = None
-    _PWA_BUNDLE_ID_CACHE = bundle_id or _PWA_BUNDLE_ID_FALLBACK
+    if not bundle_id:
+        raise RuntimeError(
+            "YouTube アプリのバンドルIDを解決できません ("
+            + os.path.join(PWA_APP_BUNDLE, "Contents", "Info.plist")
+            + " が読めないか、CFBundleIdentifier / CrAppModeShortcutID が"
+            "ありません)。Chrome で YouTube の PWA がインストールされて"
+            "いるか確認してください")
+    _PWA_BUNDLE_ID_CACHE = bundle_id
     return _PWA_BUNDLE_ID_CACHE
 
 
@@ -707,6 +712,13 @@ def extension_handoff(now_playing, dry_run):
     shorts 等のページには触らないため、既存ウィンドウで再生中のものは
     守られる。
     """
+    # バンドルIDは最初に解決を確定させる。解決できなければ以降の起動・
+    # 配置はすべて失敗するので、ここで潔くエラーで返す。
+    try:
+        pwa_bundle_id()
+    except RuntimeError as e:
+        log(f"handoff aborted: {e}")
+        return 1
     payload = {
         "title": now_playing.get("title") or "",
         "position": now_playing.get("position"),
