@@ -14,9 +14,8 @@ Apple TV で見ていた YouTube 動画を Mac の Chrome YouTube アプリ (PWA
 | `youtube_resume.py` | 本体。判定・一時停止・表示切替・アプリ起動を統括 |
 | `get_now_playing.py` | pyatv (`atvscript`) で Apple TV の再生状態・タイトル・再生位置を取得 |
 | `atv_batch.py` | pyatv API で Apple TV へ pause / menu 等のコマンド列を1接続で一括送信する |
-| `get_history.py` | `yt-dlp --cookies-from-browser chrome` で視聴履歴 (最新順) を取得し動画IDを返す |
 | `set_display_mode.py` | `displayplacer` で mirror / extend を切替。解像度は現在の構成から読み取る |
-| `extension/` | Chrome 拡張機能 (Manifest V3)。履歴ページの DOM から動画を特定して開き直す。動画ID特定の既定方式 |
+| `extension/` | Chrome 拡張機能 (Manifest V3)。履歴ページの DOM から動画を特定して開き直す。動画IDの特定はこの方式のみ |
 
 呼び出し元は `device_event_hooks/usb_added.sh`。
 USB ハブ `2109:2817` の接続 (＝従来のチャンネル切替条件) を満たす場合のみ、
@@ -33,7 +32,7 @@ YouTube の視聴履歴には視聴時刻が無く、順序しか分からない
 
 1. pyatv がゲート: Apple TV で YouTube が playing / paused なら再生していたと確定。
    タイトルと再生位置 (秒) は取れるが動画IDは取れない
-2. ID解決は Chrome 拡張機能が担当 (既定): PWA は起動パラメータの URL を
+2. ID解決は Chrome 拡張機能が担当: PWA は起動パラメータの URL を
    無視して常にホームを開くため (実測で --app-url / open -b / open -a の
    3方式ともホームだった)、ペイロード (タイトル・再生位置) は本体が
    引き継ぎ時だけ立てる localhost サーバー (http://127.0.0.1:18765/payload)
@@ -45,14 +44,14 @@ YouTube の視聴履歴には視聴時刻が無く、順序しか分からない
    特定は、ミニプレイヤー → 履歴の先頭付近の照合 → 履歴内検索
    (?query= 付きURL) → YouTube全体検索の最上位、の順で試す (再生中の動画は
    ほぼ履歴の先頭にある前提で、長いスクロールはしない)。
-   ATV で再生が確定しなかった場合は履歴に一切触らず引き継ぎなしで終了する
-   (Cookie を読むのは代替方式だけ)。なお接続直後は再生情報が一時的に
-   idle / 空で返ることがあるため、本体は未確定時に3秒・5秒の間隔で最大2回まで再取得する
-3. 代替方式 (環境変数 `YOUTUBE_RESUME_RESOLVE=ytdlp`): yt-dlp + Chrome Cookie で
-   履歴を取得して本体側でIDを確定する方式。pyatv が使えない場合は履歴の先頭を
-   候補とするフォールバックが既定で有効 (無効化は
-   `YOUTUBE_RESUME_HISTORY_FALLBACK=off`)。この方式では Cookie 取得のため、
-   実行主体 (ターミナル / usb_watcher) への TCC 許可とキーチェーン許可が要る
+   ATV で再生が確定しなかった場合は引き継ぎなしで終了する。なお接続直後は
+   再生情報が一時的に idle / 空で返ることがあるため、本体は未確定時に
+   3秒・5秒の間隔で最大2回まで再取得する
+
+   なお、yt-dlp + Chrome のログイン Cookie で視聴履歴から ID を取る方式も
+   当初は併存させていたが、拡張方式だけで完結するため 2026-11-14 に廃止
+   した。履歴取得のために Cookie DB を読む経路は無く、キーチェーン許可や
+   usb_watcher への TCC 許可は不要。
 
 再生位置の引き継ぎ:
 
@@ -147,22 +146,9 @@ venv を作り直す場合も素の `pip install pyatv` ではなく `-r require
 export YOUTUBE_RESUME_ATV_ID=<identifier>
 ```
 
-以下、Chrome での事前ログインと Cookie 関連は、代替方式
-(`YOUTUBE_RESUME_RESOLVE=ytdlp`) を使う場合のみ必要。既定の拡張方式では
-Cookie は使わない。
-
-履歴取得の Cookie 参照先は Chrome (日常ブラウザの Arc ではなく、移行先の Chrome に
-寄せる方針を 2026-11-14 に決定)。Chrome で YouTube に一度もログインしていないと
-Cookie DB 自体が無く `could not find chrome cookies database` で落ちるため、
-先に Chrome で YouTube にログインし動画を1本開いておくこと。
-
-初回の履歴取得では macOS キーチェーン「Chrome Safe Storage」への
-アクセス許可ダイアログが出る場合があるので許可する。
-Chrome の既定プロファイル以外で YouTube にログインしている場合は:
-
-```sh
-export YOUTUBE_RESUME_CHROME_PROFILE="Profile 1"
-```
+Chrome 側の前提は、Apple TV と同一の Google アカウントで YouTube に
+ログインしていることだけ (拡張機能がログイン済みページの DOM を読むため)。
+Cookie DB の読み取りはしないので、キーチェーン許可やプロファイル指定は不要。
 
 ## 動作確認
 
@@ -170,12 +156,6 @@ export YOUTUBE_RESUME_CHROME_PROFILE="Profile 1"
 
 ```sh
 ~/automations/tools/youtube_resume/youtube_resume.py --dry-run
-```
-
-pyatv を使わず履歴だけで判定:
-
-```sh
-~/automations/tools/youtube_resume/youtube_resume.py --dry-run --no-atv
 ```
 
 ログ: `~/Library/Logs/youtube_resume.log`
@@ -215,6 +195,10 @@ pyatv を使わず履歴だけで判定:
   アプリウィンドウが開かないため、`open -a` でアプリバンドル
   (~/Applications/Chrome Apps.localized/YouTube.app) を開いてシムから
   冷間起動させる
+- PWA のバンドルIDは環境依存 (PWA のインストール状態で変わり得る) ため
+  ハードコードを正とせず、アプリバンドルの `Contents/Info.plist` の
+  `CFBundleIdentifier` から解決する (読めない場合のみフォールバック値を
+  使う)。`--app-id` に渡す値もバンドルIDの末尾から導出する
 - 起動後の対象ウィンドウの選択・リロード・内蔵側への配置は、1回の
   AppleScript 実行の中で「YouTube ホームを表示しているタブ」を URL で
   見つけて完結させる。ウィンドウIDを別の osascript 実行へ持ち回すと

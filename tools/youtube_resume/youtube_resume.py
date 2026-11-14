@@ -8,17 +8,15 @@
   1. pyatv で Apple TV の再生状態を確認する (get_now_playing.py)
      - YouTube が playing / paused なら「再生していた」と確定できる。
        タイトルと再生位置 (秒) が取れるが動画IDは取れない。
-  2. 動画IDの特定 (2方式。環境変数 YOUTUBE_RESUME_RESOLVE で切替、既定は extension)
-     - extension: Chrome 拡張機能 (extension/ フォルダ) へ委譲する。PWA は起動
-       パラメータの URL を無視して常にホームを開くため、ペイロード (タイトル・
-       再生位置) は引き継ぎ時だけ立てる localhost サーバー (127.0.0.1:18765)
-       経由で拡張へ渡し、拡張がログイン済みページの DOM からタイトル一致で
-       IDを特定して開き直す。Cookie DB の読み取りや usb_watcher への TCC 許可は
-       不要。pyatv でタイトルが確定している場合のみ。
-     - ytdlp: 視聴履歴を取得する (get_history.py / yt-dlp + Chrome Cookie)。
-       最新順の動画ID一覧と pyatv のタイトルを一致させてIDを確定する。
-       pyatv が使えない場合は履歴の先頭を「直近で再生していた動画」とみなす
-       (環境変数 YOUTUBE_RESUME_HISTORY_FALLBACK=off で無効化できる)。
+  2. 動画IDの特定は Chrome 拡張機能 (extension/ フォルダ) へ委譲する。
+     PWA は起動パラメータの URL を無視して常にホームを開くため、ペイロード
+     (タイトル・再生位置) は引き継ぎ時だけ立てる localhost サーバー
+     (127.0.0.1:18765) 経由で拡張へ渡し、拡張がログイン済みページの DOM から
+     タイトル一致で ID を特定して開き直す。Cookie DB の読み取りは一切せず、
+     usb_watcher への TCC 許可も不要。pyatv でタイトルが確定している場合のみ。
+     (当初は yt-dlp + Chrome のログイン Cookie で視聴履歴から ID を取る方式も
+     併存させていたが、拡張方式だけで完結するため 2026-11-14 に廃止し、
+     関連コード・環境変数・セットアップ手順は一掃した)
   3. 候補があれば:
      - 再生中だった Apple TV を一時停止し、戻る (menu) も送って再生画面を抜ける
        (裏で進み続けるのを防ぎ、TVへ戻した時に再生画面に居残らないようにする)
@@ -31,7 +29,6 @@
 
 オプション:
   --dry-run   判定だけ行い、表示切替・アプリ起動・一時停止をしない
-  --no-atv    pyatv を使わず履歴だけで判定する (動作確認用)
 
 ログ: ~/Library/Logs/youtube_resume.log
 状態: ~/.local/state/youtube_resume/last_resume.json (二重起動ガード)
@@ -39,6 +36,7 @@
 import argparse
 import json
 import os
+import plistlib
 import re
 import shutil
 import subprocess
@@ -53,8 +51,44 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 HERE = os.path.dirname(os.path.abspath(__file__))
 LOG_PATH = os.path.expanduser("~/Library/Logs/youtube_resume.log")
 STATE_PATH = os.path.expanduser("~/.local/state/youtube_resume/last_resume.json")
-PWA_BUNDLE_ID = "com.google.Chrome.app.agimnkijcaahngcdmfeangaknmldooml"
-PWA_APP_ID = PWA_BUNDLE_ID.rsplit(".", 1)[-1]  # CrAppModeShortcutID と同値
+PWA_APP_BUNDLE = os.path.expanduser(
+    "~/Applications/Chrome Apps.localized/YouTube.app")
+# バンドルIDのフォールバック値。末尾は CrAppModeShortcutID
+# (= Chrome の --app-id に渡す値) と同値。
+_PWA_BUNDLE_ID_FALLBACK = "com.google.Chrome.app.agimnkijcaahngcdmfeangaknmldooml"
+_PWA_BUNDLE_ID_CACHE = None
+
+
+def pwa_bundle_id():
+    """YouTube アプリ (PWA) のバンドルIDをアプリバンドル自身から解決する。
+
+    バンドルIDは PWA のインストール状態に依存する環境依存値のため、
+    ハードコードを正とせず、アプリバンドル (冷間起動の open -a でも使う
+    PWA_APP_BUNDLE) の Contents/Info.plist にある CFBundleIdentifier を
+    正とする (無い場合は CrAppModeShortcutID から組み立てる)。plist が
+    読めない場合だけフォールバック値を使う。結果はプロセス内にキャッシュ
+    する。
+    """
+    global _PWA_BUNDLE_ID_CACHE
+    if _PWA_BUNDLE_ID_CACHE:
+        return _PWA_BUNDLE_ID_CACHE
+    bundle_id = None
+    try:
+        with open(os.path.join(PWA_APP_BUNDLE, "Contents", "Info.plist"),
+                  "rb") as f:
+            info = plistlib.load(f)
+        bundle_id = info.get("CFBundleIdentifier")
+        if not bundle_id and info.get("CrAppModeShortcutID"):
+            bundle_id = "com.google.Chrome.app." + info["CrAppModeShortcutID"]
+    except Exception:
+        bundle_id = None
+    _PWA_BUNDLE_ID_CACHE = bundle_id or _PWA_BUNDLE_ID_FALLBACK
+    return _PWA_BUNDLE_ID_CACHE
+
+
+def pwa_app_id():
+    """Chrome の --app-id に渡す値 (バンドルIDの末尾 = CrAppModeShortcutID)。"""
+    return pwa_bundle_id().rsplit(".", 1)[-1]
 CHROME_BIN = "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
 DEDUPE_WINDOW_SEC = 180
 # 二重起動ガードで「同じ引き継ぎ」とみなす再生位置のずれの許容幅 (秒)。
@@ -309,7 +343,7 @@ def youtube_app_window_title():
     """
     script = f'''
 tell application "System Events"
-    set p to (first process whose bundle identifier is "{PWA_BUNDLE_ID}")
+    set p to (first process whose bundle identifier is "{pwa_bundle_id()}")
     if (count of windows of p) is 0 then return ""
     return name of window 1 of p
 end tell
@@ -348,7 +382,7 @@ def youtube_app_pids():
     ここでは起動しているかどうかの把握にだけ使う。
     """
     script = ('tell application "System Events" to get unix id of '
-              f'(every process whose bundle identifier is "{PWA_BUNDLE_ID}")')
+              f'(every process whose bundle identifier is "{pwa_bundle_id()}")')
     try:
         proc = subprocess.run(["osascript", "-e", script],
                               capture_output=True, text=True, timeout=10)
@@ -517,8 +551,7 @@ def open_youtube_app(url, dry_run, expect_title=""):
     # 実測: 起動ログは出るがホームタブが最後まで現れない)。その場合は
     # LaunchServices 経由でアプリバンドルを開き、シムに Chrome を
     # アプリモードで冷間起動させる。
-    app_bundle = os.path.expanduser(
-        "~/Applications/Chrome Apps.localized/YouTube.app")
+    app_bundle = PWA_APP_BUNDLE
     cold = not chrome_is_running() and not youtube_app_pids()
     try:
         if cold and os.path.isdir(app_bundle):
@@ -527,7 +560,7 @@ def open_youtube_app(url, dry_run, expect_title=""):
                              stderr=subprocess.DEVNULL)
             log("launched YouTube app via open -a (Chrome was not running)")
         else:
-            subprocess.Popen([CHROME_BIN, f"--app-id={PWA_APP_ID}"],
+            subprocess.Popen([CHROME_BIN, f"--app-id={pwa_app_id()}"],
                              stdout=subprocess.DEVNULL,
                              stderr=subprocess.DEVNULL)
             log("launched YouTube app via Chrome --app-id "
@@ -560,7 +593,7 @@ def move_youtube_to_internal(internal, dry_run):
         return
     script = f'''
 tell application "System Events"
-    set procList to (every process whose bundle identifier is "{PWA_BUNDLE_ID}")
+    set procList to (every process whose bundle identifier is "{pwa_bundle_id()}")
     if (count of procList) is 0 then return "no process"
     tell first item of procList
         if (count of windows) is 0 then return "no window"
@@ -658,7 +691,7 @@ def start_payload_server(payload):
 
 
 def extension_handoff(now_playing, dry_run):
-    """Chrome 拡張機能へ動画特定を委譲する経路 (既定)。
+    """Chrome 拡張機能へ動画特定を委譲する経路 (唯一の方式)。
 
     PWA を起動し (常にホームが開く)、ペイロードは localhost の使い捨て
     サーバー経由で拡張機能 (extension/content.js) へ渡す。拡張はホームで
@@ -777,26 +810,23 @@ def save_state(state):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--dry-run", action="store_true")
-    parser.add_argument("--no-atv", action="store_true")
     args = parser.parse_args()
     dry_run = args.dry_run
 
-    log(f"=== youtube_resume start (dry_run={dry_run}, no_atv={args.no_atv}) ===")
+    log(f"=== youtube_resume start (dry_run={dry_run}) ===")
 
     # --- 1. Apple TV の再生状態 ---
-    now_playing = {"available": False, "is_youtube": False, "error": "skipped"}
-    if not args.no_atv:
+    now_playing = run_json("get_now_playing.py", timeout=30)
+    # 接続直後は再生情報が一時的に idle / 空で返ることがある (Apple TV
+    # 側の Now Playing メタデータが載るまでのラグ) ため、間隔を空けて
+    # 最大2回まで再試行する。
+    for retry_wait in (3, 5):
+        if now_playing.get("available") and now_playing.get("title"):
+            break
+        log(f"now_playing not confirmed (will retry in {retry_wait}s): "
+            f"{json.dumps(now_playing, ensure_ascii=False)}")
+        time.sleep(retry_wait)
         now_playing = run_json("get_now_playing.py", timeout=30)
-        # 接続直後は再生情報が一時的に idle / 空で返ることがある (Apple TV
-        # 側の Now Playing メタデータが載るまでのラグ) ため、間隔を空けて
-        # 最大2回まで再試行する。
-        for retry_wait in (3, 5):
-            if now_playing.get("available") and now_playing.get("title"):
-                break
-            log(f"now_playing not confirmed (will retry in {retry_wait}s): "
-                f"{json.dumps(now_playing, ensure_ascii=False)}")
-            time.sleep(retry_wait)
-            now_playing = run_json("get_now_playing.py", timeout=30)
     log(f"now_playing: {json.dumps(now_playing, ensure_ascii=False)}")
     atv_youtube = (
         now_playing.get("available")
@@ -821,110 +851,14 @@ def main():
             set_display_mode("mirror", dry_run)
             return 0
 
-    # --- 2. 動画IDの特定 (拡張機能ハンドオフ or yt-dlp 履歴) ---
-    resolve_mode = os.environ.get("YOUTUBE_RESUME_RESOLVE", "extension").lower()
-    if resolve_mode == "extension":
-        if atv_youtube:
-            return extension_handoff(now_playing, dry_run)
-        # 拡張方式では Cookie を一切使わない。Apple TV で再生が確定しなければ
-        # 引き継ぐ対象は無いので、履歴 (get_history.py) には触らずミラーで終わる。
-        log("extension mode: no confirmed ATV playback -> mirror (no history access)")
-        wait_for_two_displays()
-        set_display_mode("mirror", dry_run)
-        return 0
-
-    history = run_json("get_history.py", timeout=120)
-    entries = history.get("entries") or []
-    log(f"history: available={history.get('available')} count={len(entries)} "
-        f"error={history.get('error')}")
-    if not history.get("available"):
-        log("history unavailable; nothing to resume -> mirror")
-        wait_for_two_displays()
-        set_display_mode("mirror", dry_run)
-        return 0
-
-    # --- 3. 候補決定 ---
-    candidate = None
-    position = None
-    source = None
-    fallback_on = os.environ.get("YOUTUBE_RESUME_HISTORY_FALLBACK", "on").lower() != "off"
-
+    # --- 2. 動画IDの特定は拡張機能へ委譲する ---
     if atv_youtube:
-        target = normalize_title(now_playing["title"])
-        for e in entries:
-            if normalize_title(e["title"]) == target:
-                candidate = e
-                break
-        if candidate:
-            source = "atv+history"
-            pos = now_playing.get("position")
-            total = now_playing.get("total_time")
-            if isinstance(pos, int) and isinstance(total, int) and total > 0:
-                position = max(pos - 3, 0)  # 切り替わりの数秒ぶん少し巻き戻す
-        else:
-            # タイトル一致がなければ検索で最上位を拾う (精度は落ちるためログに残す)
-            log("history title mismatch; falling back to ytsearch by title")
-            try:
-                query = f"ytsearch1:{now_playing['title']}"
-                yt_dlp = "/opt/homebrew/bin/yt-dlp" if os.path.exists("/opt/homebrew/bin/yt-dlp") else shutil.which("yt-dlp")
-                proc = subprocess.run(
-                    [yt_dlp, "--flat-playlist", "--no-warnings", "-J", query],
-                    capture_output=True, text=True, timeout=60)
-                data = json.loads(proc.stdout)
-                found = (data.get("entries") or [None])[0]
-                if found and found.get("id"):
-                    candidate = {"id": found["id"], "title": found.get("title") or "",
-                                 "url": f"https://www.youtube.com/watch?v={found['id']}"}
-                    source = "atv+search (low confidence)"
-                    pos = now_playing.get("position")
-                    total = now_playing.get("total_time")
-                    if isinstance(pos, int) and isinstance(total, int) and total > 0:
-                        position = max(pos - 3, 0)
-            except Exception as e:
-                log(f"ytsearch fallback failed: {e}")
-    elif fallback_on and entries:
-        candidate = entries[0]
-        source = "history-fallback (no atv gate)"
-    elif not fallback_on:
-        log("no atv gate and history fallback is off -> no candidate")
-
-    if not candidate:
-        log("no candidate -> mirror")
-        wait_for_two_displays()
-        set_display_mode("mirror", dry_run)
-        save_state({"last_check_at": time.time(), "video_id": None})
-        return 0
-
-    # 二重起動ガード: 同じ動画を短時間に再び開かない
-    state = load_state()
-    if (state.get("video_id") == candidate["id"]
-            and time.time() - float(state.get("resumed_at", 0)) < DEDUPE_WINDOW_SEC):
-        log(f"duplicate resume suppressed: {candidate['id']}")
-        return 0
-
-    log(f"candidate: source={source} id={candidate['id']} title={candidate['title']!r} "
-        f"position={position}")
-
-    # --- 4. Apple TV を止める (再生中なら pause、加えて menu で再生画面を抜ける) ---
-    if atv_youtube:
-        pause_apple_tv(now_playing, dry_run)
-
-    # --- 5. 拡張表示にして YouTube アプリで開く ---
+        return extension_handoff(now_playing, dry_run)
+    # Apple TV で再生が確定しなければ引き継ぐ対象は無い。動画IDの特定は
+    # 拡張方式のみで、Cookie や履歴取得には一切触らずミラーで終わる。
+    log("no confirmed ATV playback -> mirror")
     wait_for_two_displays()
-    disp = set_display_mode("extend", dry_run)
-    time.sleep(0 if dry_run else 1)  # 表示構成が落ち着くのを待つ
-
-    url = candidate["url"]
-    if position:
-        url += ("&" if "?" in url else "?") + f"t={position}s"
-    if open_youtube_app(url, dry_run, expect_title=candidate["title"]):
-        move_youtube_to_internal(disp.get("internal"), dry_run)
-    else:
-        log("YouTube app window could not be confirmed; URL launch attempted only")
-
-    save_state({"video_id": candidate["id"], "title": candidate["title"],
-                "source": source, "resumed_at": time.time()})
-    log("=== youtube_resume done (extended + YouTube) ===")
+    set_display_mode("mirror", dry_run)
     return 0
 
 

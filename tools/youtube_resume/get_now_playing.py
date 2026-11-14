@@ -15,8 +15,7 @@ stdout に JSON を1つだけ出す:
 注意:
 - 事前に `atvremote pair` でペアリング済みであることが前提。
   未ペアリング / Apple TV がスリープ等で到達できない場合は available=false で正常終了する
-  (呼び出し側の扱いは方式で異なる: 既定の拡張方式では履歴に触らず引き継ぎなしで
-  終了し、代替の yt-dlp 方式でのみ履歴フォールバックへ進む)。
+  (呼び出し側は再生が確定しなかったものとして、引き継ぎなしで終了する)。
 - 特定の Apple TV を固定したい場合は環境変数 YOUTUBE_RESUME_ATV_ID に
   `atvremote scan` で出る identifier を設定する。
 """
